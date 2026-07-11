@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -96,23 +97,23 @@ func (s *smtpSender) Send(ctx context.Context, msg Message) error {
 	}()
 
 	if err := client.Mail(msg.From.Email); err != nil {
-		return err
+		return fmt.Errorf("mail: MAIL FROM <%s>: %w", msg.From.Email, err)
 	}
 	for _, r := range recipients {
 		if err := client.Rcpt(r); err != nil {
-			return err
+			return fmt.Errorf("mail: RCPT TO <%s>: %w", r, err)
 		}
 	}
 	w, err := client.Data()
 	if err != nil {
-		return err
+		return fmt.Errorf("mail: DATA: %w", err)
 	}
 	if _, err := w.Write(raw); err != nil {
 		_ = w.Close()
-		return err
+		return fmt.Errorf("mail: write body: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return fmt.Errorf("mail: close body: %w", err)
 	}
 	return client.Quit()
 }

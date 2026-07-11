@@ -27,7 +27,10 @@ type entity struct {
 // dateLayout is the RFC 5322 date format.
 const dateLayout = "Mon, 02 Jan 2006 15:04:05 -0700"
 
-// build renders the message to RFC 5322/MIME bytes with CRLF line endings.
+// build renders the message to RFC 5322/MIME bytes with CRLF line endings. It
+// requires at least one recipient, so the dev and test senders reject the same
+// empty-recipient message an SMTP server would. The From address may be empty
+// here: a transport can fill a default before sending.
 func (m Message) build() ([]byte, error) {
 	for _, grp := range [][]Address{{m.From}, m.To, m.Cc, m.Bcc, m.ReplyTo} {
 		for _, a := range grp {
@@ -39,6 +42,9 @@ func (m Message) build() ([]byte, error) {
 			}
 		}
 	}
+	if len(m.recipients()) == 0 {
+		return nil, ErrNoRecipients
+	}
 
 	root := m.contentEntity()
 	if root.header == nil {
@@ -49,29 +55,34 @@ func (m Message) build() ([]byte, error) {
 	if m.From.Email != "" {
 		h.Set("From", m.From.String())
 	}
-	if len(m.To) > 0 {
-		h.Set("To", formatList(m.To))
+	// Set an address header only when it renders to a non-empty list, so a
+	// slice of empty addresses never emits a bare "To:" header.
+	if s := formatList(m.To); s != "" {
+		h.Set("To", s)
 	}
-	if len(m.Cc) > 0 {
-		h.Set("Cc", formatList(m.Cc))
+	if s := formatList(m.Cc); s != "" {
+		h.Set("Cc", s)
 	}
-	if len(m.ReplyTo) > 0 {
-		h.Set("Reply-To", formatList(m.ReplyTo))
+	if s := formatList(m.ReplyTo); s != "" {
+		h.Set("Reply-To", s)
 	}
 	if m.Subject != "" {
-		h.Set("Subject", mime.QEncoding.Encode("utf-8", m.Subject))
+		// Encode after stripping CR/LF: QEncoding leaves pure ASCII unchanged,
+		// so an un-sanitized subject like "hi\r\nBcc: x" would inject a header.
+		h.Set("Subject", mime.QEncoding.Encode("utf-8", sanitizeHeaderValue(m.Subject)))
 	}
 	h.Set("Date", time.Now().Format(dateLayout))
 	h.Set("Message-Id", messageID())
 	h.Set("MIME-Version", "1.0")
 
 	// Custom headers must not clobber structural or envelope headers, carry an
-	// invalid key, or inject extra headers via CR/LF in the value.
+	// invalid key, or inject extra headers via CR/LF in the value. Non-ASCII
+	// values are RFC 2047 encoded, like the subject and display names.
 	for k, v := range m.Headers {
 		if isReservedHeader(k) || !validHeaderKey(k) {
 			continue
 		}
-		h.Set(k, sanitizeHeaderValue(v))
+		h.Set(k, mime.QEncoding.Encode("utf-8", sanitizeHeaderValue(v)))
 	}
 
 	var buf bytes.Buffer

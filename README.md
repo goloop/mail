@@ -48,7 +48,7 @@ Set `Text` and/or `HTML`:
 - with `Attachments` -> `multipart/mixed`
 
 Addresses are validated, display names are RFC 2047 encoded, text is
-quoted-printable and attachments are base64. Stable `Date`, `Message-ID` and
+quoted-printable and attachments are base64. A current `Date`, a random `Message-ID` and
 `MIME-Version` headers are added automatically.
 
 ## Transports

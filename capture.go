@@ -16,14 +16,16 @@ func NewCapture() *CaptureSender {
 	return &CaptureSender{}
 }
 
-// Send validates and records the message.
+// Send validates and records a deep copy of the message, so a caller that
+// reuses or mutates the original slices (To, Attachments, Attachment.Data)
+// after sending cannot change what a test later inspects.
 func (c *CaptureSender) Send(_ context.Context, msg Message) error {
 	if _, err := msg.build(); err != nil {
 		return err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.messages = append(c.messages, msg)
+	c.messages = append(c.messages, msg.clone())
 	return nil
 }
 

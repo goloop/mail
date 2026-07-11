@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"io"
@@ -364,4 +365,43 @@ func fmtSscan(s string, p *int) (int, error) {
 	}
 	*p = n
 	return 1, nil
+}
+
+func TestSubjectHeaderInjection(t *testing.T) {
+	msg := Message{
+		From:    Address{Email: "a@b.c"},
+		To:      []Address{{Email: "d@e.f"}},
+		Subject: "hello\r\nBcc: victim@example.com",
+		Text:    "body",
+	}
+	raw, err := msg.build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	// The injected Bcc must not appear as a header; CR/LF are stripped from the
+	// subject before encoding.
+	if bytes.Contains(raw, []byte("\r\nBcc: victim@example.com")) {
+		t.Fatalf("subject injected a header:\n%s", raw)
+	}
+}
+
+func TestBuildRequiresRecipient(t *testing.T) {
+	msg := Message{From: Address{Email: "a@b.c"}, Text: "hi"}
+	if _, err := msg.build(); err != ErrNoRecipients {
+		t.Fatalf("build with no recipients = %v, want ErrNoRecipients", err)
+	}
+}
+
+func TestCaptureDeepCopy(t *testing.T) {
+	c := NewCapture()
+	to := []Address{{Email: "d@e.f"}}
+	msg := Message{From: Address{Email: "a@b.c"}, To: to, Text: "hi"}
+	if err := c.Send(context.Background(), msg); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	to[0].Email = "changed@x.y" // mutate the original after capture
+	got, _ := c.Last()
+	if got.To[0].Email != "d@e.f" {
+		t.Fatalf("captured message shares slice: %q", got.To[0].Email)
+	}
 }

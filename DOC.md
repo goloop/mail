@@ -24,8 +24,9 @@ type Address struct {
 
 `String` formats the address per RFC 5322, encoding a non-ASCII display name as
 an RFC 2047 encoded-word. `Validate` reports whether the email is non-empty and
-parseable. Building a message validates every address and fails on the first
-invalid one.
+parseable. Building a message validates every non-empty address (failing on the
+first invalid one), skips empty entries, and requires at least one recipient
+(`ErrNoRecipients`).
 
 ## Messages
 
@@ -60,7 +61,8 @@ The body is chosen from `Text`/`HTML`:
 
 Text parts are quoted-printable; attachments are base64 wrapped at 76 columns
 with a sanitized filename. The subject is RFC 2047 encoded when it contains
-non-ASCII characters. A random `Message-ID` and a stable `Date` are always set.
+non-ASCII characters. A random `Message-ID` and the current `Date` are always
+set (both change on every build).
 
 ## Senders
 
@@ -91,8 +93,10 @@ type SMTPConfig struct {
 ```
 
 `TLSMode` is `TLSStartTLS` (default), `TLSImplicit` (SMTPS, usually port 465) or
-`TLSNone` (development only). When `Username` is set, `PLAIN` auth is used over
-the secured connection.
+`TLSNone` (development only). When `Username` is set, `PLAIN` auth is attempted;
+`net/smtp` only permits it over a TLS connection or to localhost, so pair auth
+with `TLSImplicit`/`TLSStartTLS` in production - never send credentials over
+`TLSNone` to a remote host.
 
 The send sequence: validate sender/recipients, build the message, dial with the
 timeout, upgrade to TLS if configured, authenticate, then `MAIL`/`RCPT`/`DATA`
