@@ -323,6 +323,95 @@ func mockSMTP(t *testing.T, captured *string) string {
 	return ln.Addr().String()
 }
 
+// mockSMTPRejectRcpt is an SMTP server that rejects every RCPT TO with 550.
+func mockSMTPRejectRcpt(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		defer ln.Close()
+		br := bufio.NewReader(conn)
+		writeLine := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
+		writeLine("220 mock ESMTP")
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				return
+			}
+			cmd := strings.ToUpper(strings.TrimSpace(line))
+			switch {
+			case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
+				writeLine("250 mock")
+			case strings.HasPrefix(cmd, "RCPT TO"):
+				writeLine("550 no such user")
+			case strings.HasPrefix(cmd, "QUIT"):
+				writeLine("221 Bye")
+				return
+			default:
+				writeLine("250 OK")
+			}
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// mockSMTPDropOnQuit accepts the whole exchange through DATA but drops the
+// connection on QUIT, so client.Quit returns an error even though the message
+// was accepted.
+func mockSMTPDropOnQuit(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		defer ln.Close()
+		br := bufio.NewReader(conn)
+		writeLine := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
+		writeLine("220 mock ESMTP")
+		inData := false
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if inData {
+				if line == ".\r\n" {
+					inData = false
+					writeLine("250 OK")
+				}
+				continue
+			}
+			cmd := strings.ToUpper(strings.TrimSpace(line))
+			switch {
+			case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
+				writeLine("250 mock")
+			case strings.HasPrefix(cmd, "DATA"):
+				writeLine("354 End data with <CR><LF>.<CR><LF>")
+				inData = true
+			case strings.HasPrefix(cmd, "QUIT"):
+				// Drop without a 221 reply.
+				return
+			default:
+				writeLine("250 OK")
+			}
+		}
+	}()
+	return ln.Addr().String()
+}
+
 func TestSMTPSendHappyPath(t *testing.T) {
 	var captured string
 	addr := mockSMTP(t, &captured)
@@ -389,6 +478,106 @@ func TestBuildRequiresRecipient(t *testing.T) {
 	msg := Message{From: Address{Email: "a@b.c"}, Text: "hi"}
 	if _, err := msg.build(); err != ErrNoRecipients {
 		t.Fatalf("build with no recipients = %v, want ErrNoRecipients", err)
+	}
+}
+
+// Messages() must return a deep copy: mutating the returned message must not
+// change the captured state.
+func TestCaptureMessagesDeepCopy(t *testing.T) {
+	c := NewCapture()
+	msg := Message{
+		From: Address{Email: "a@b.c"}, To: []Address{{Email: "d@e.f"}}, Text: "hi",
+	}
+	if err := c.Send(context.Background(), msg); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	got := c.Messages()
+	got[0].To[0].Email = "tampered@x.y"
+	again := c.Messages()
+	if again[0].To[0].Email != "d@e.f" {
+		t.Fatalf("Messages() shared state: %q", again[0].To[0].Email)
+	}
+}
+
+// TLSNone with credentials must be refused unless AllowInsecureAuth is set.
+func TestInsecureAuthRefused(t *testing.T) {
+	s := NewSMTP(SMTPConfig{
+		Host: "127.0.0.1", Port: 1, From: Address{Email: "a@b.c"},
+		Username: "u", Password: "p", TLS: TLSNone, Timeout: time.Second,
+	})
+	err := s.Send(context.Background(), Message{
+		To: []Address{{Email: "d@e.f"}}, Text: "hi",
+	})
+	if err != ErrInsecureAuth {
+		t.Fatalf("err = %v, want ErrInsecureAuth", err)
+	}
+
+	// With the opt-in, the guard no longer fires (the send fails later, at the
+	// unreachable dial, not with ErrInsecureAuth).
+	s2 := NewSMTP(SMTPConfig{
+		Host: "127.0.0.1", Port: 1, From: Address{Email: "a@b.c"},
+		Username: "u", Password: "p", TLS: TLSNone, Timeout: time.Second,
+		AllowInsecureAuth: true,
+	})
+	if err := s2.Send(context.Background(), Message{
+		To: []Address{{Email: "d@e.f"}}, Text: "hi",
+	}); err == ErrInsecureAuth {
+		t.Fatal("AllowInsecureAuth did not bypass the guard")
+	}
+}
+
+// A blind recipient's address must not appear in a RCPT error.
+func TestBccAddressMaskedInError(t *testing.T) {
+	addr := mockSMTPRejectRcpt(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := 0
+	fmtSscan(portStr, &port)
+
+	s := NewSMTP(SMTPConfig{
+		Host: host, Port: port, From: Address{Email: "a@b.c"},
+		TLS: TLSNone, Timeout: 3 * time.Second,
+	})
+	err := s.Send(context.Background(), Message{
+		To:   []Address{{Email: "visible@example.com"}},
+		Bcc:  []Address{{Email: "secret@example.com"}},
+		Text: "hi",
+	})
+	if err == nil {
+		t.Fatal("want RCPT error, got nil")
+	}
+	if strings.Contains(err.Error(), "secret@example.com") {
+		t.Fatalf("error leaked blind recipient: %v", err)
+	}
+}
+
+// A failed QUIT after DATA was accepted must not be reported as a delivery
+// failure, so a retrying caller does not send a duplicate.
+func TestQuitErrorAfterDataNotFatal(t *testing.T) {
+	addr := mockSMTPDropOnQuit(t)
+	host, portStr, _ := net.SplitHostPort(addr)
+	port := 0
+	fmtSscan(portStr, &port)
+
+	s := NewSMTP(SMTPConfig{
+		Host: host, Port: port, From: Address{Email: "a@b.c"},
+		TLS: TLSNone, Timeout: 3 * time.Second,
+	})
+	if err := s.Send(context.Background(), Message{
+		To: []Address{{Email: "d@e.f"}}, Text: "hi",
+	}); err != nil {
+		t.Fatalf("send reported a dirty QUIT as failure: %v", err)
+	}
+}
+
+// A long attachment filename is bounded so it cannot overflow a header line.
+func TestAttachmentFilenameTruncated(t *testing.T) {
+	long := strings.Repeat("a", 500) + ".txt"
+	got := sanitizeFilename(long)
+	if len(got) > maxFilenameBytes {
+		t.Fatalf("filename not bounded: %d bytes", len(got))
+	}
+	if !strings.HasSuffix(got, ".txt") {
+		t.Fatalf("extension not preserved: %q", got)
 	}
 }
 

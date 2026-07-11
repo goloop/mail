@@ -88,6 +88,8 @@ type SMTPConfig struct {
 	From     Address // From за замовчуванням, коли в повідомленні немає
 	TLS      TLSMode
 	Timeout  time.Duration // дефолт 10s
+
+	AllowInsecureAuth bool // дозволити облікові дані через TLSNone (лише тести)
 }
 ```
 
@@ -95,7 +97,9 @@ type SMTPConfig struct {
 або `TLSNone` (лише розробка). Коли задано `Username`, робиться спроба `PLAIN`-
 auth; `net/smtp` дозволяє її лише поверх TLS або до localhost, тож у проді
 поєднуйте auth із `TLSImplicit`/`TLSStartTLS` - ніколи не шліть облікові дані
-через `TLSNone` на віддалений хост.
+через `TLSNone` на віддалений хост. Облікові дані через `TLSNone` відхиляються
+з `ErrInsecureAuth`, поки не виставлено `AllowInsecureAuth` (лише для локальних
+тестів).
 
 Послідовність надсилання: валідація sender/recipients, побудова повідомлення,
 dial із таймаутом, апгрейд до TLS за конфігом, автентифікація, тоді

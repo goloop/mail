@@ -72,7 +72,11 @@ func (m Message) build() ([]byte, error) {
 		h.Set("Subject", mime.QEncoding.Encode("utf-8", sanitizeHeaderValue(m.Subject)))
 	}
 	h.Set("Date", time.Now().Format(dateLayout))
-	h.Set("Message-Id", messageID())
+	mid, err := messageID()
+	if err != nil {
+		return nil, err
+	}
+	h.Set("Message-Id", mid)
 	h.Set("MIME-Version", "1.0")
 
 	// Custom headers must not clobber structural or envelope headers, carry an
@@ -86,7 +90,9 @@ func (m Message) build() ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	render(&buf, root)
+	if err := render(&buf, root); err != nil {
+		return nil, err
+	}
 	return buf.Bytes(), nil
 }
 
@@ -162,10 +168,14 @@ func attachmentEntity(at Attachment) entity {
 	}
 }
 
-// render writes the entity (leaf or multipart) with CRLF line endings.
-func render(buf *bytes.Buffer, e entity) {
+// render writes the entity (leaf or multipart) with CRLF line endings. It
+// returns an error only if a random multipart boundary cannot be generated.
+func render(buf *bytes.Buffer, e entity) error {
 	if e.mediaType != "" {
-		boundary := randomBoundary()
+		boundary, err := randomBoundary()
+		if err != nil {
+			return err
+		}
 		if e.header == nil {
 			e.header = textproto.MIMEHeader{}
 		}
@@ -174,15 +184,18 @@ func render(buf *bytes.Buffer, e entity) {
 		buf.WriteString("\r\n")
 		for _, p := range e.parts {
 			buf.WriteString("--" + boundary + "\r\n")
-			render(buf, p)
+			if err := render(buf, p); err != nil {
+				return err
+			}
 			buf.WriteString("\r\n")
 		}
 		buf.WriteString("--" + boundary + "--\r\n")
-		return
+		return nil
 	}
 	writeHeaders(buf, e.header)
 	buf.WriteString("\r\n")
 	buf.Write(e.body)
+	return nil
 }
 
 // headerOrder is the canonical (textproto-canonicalized) header order.
@@ -302,30 +315,61 @@ func base64Wrap(data []byte) []byte {
 	return buf.Bytes()
 }
 
-// sanitizeFilename removes characters that could break a header line.
+// maxFilenameBytes bounds an attachment filename so it cannot produce a
+// Content-Type/Content-Disposition line too long for a MIME parser to accept.
+// Header folding does not break a single long unspaced token, so the name
+// itself must be bounded.
+const maxFilenameBytes = 200
+
+// sanitizeFilename removes characters that could break a header line and bounds
+// the length, preserving a short extension.
 func sanitizeFilename(name string) string {
 	name = strings.NewReplacer("\r", "", "\n", "", `"`, "", "\\", "", "/", "_").Replace(name)
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "attachment"
 	}
-	return name
+	return truncateFilename(name, maxFilenameBytes)
 }
 
-// randomBoundary returns a random MIME multipart boundary.
-func randomBoundary() string {
+// truncateFilename shortens name to at most max bytes, keeping a short trailing
+// extension and never cutting in the middle of a UTF-8 rune.
+func truncateFilename(name string, max int) string {
+	if len(name) <= max {
+		return name
+	}
+	ext := ""
+	if i := strings.LastIndexByte(name, '.'); i > 0 && len(name)-i <= 16 {
+		ext = name[i:]
+	}
+	keep := max - len(ext)
+	if keep < 1 {
+		keep, ext = max, ""
+	}
+	base := strings.ToValidUTF8(name[:keep], "")
+	return base + ext
+}
+
+// randomBoundary returns a random MIME multipart boundary. It errors if the
+// system random source fails, so a boundary is never silently deterministic.
+func randomBoundary() (string, error) {
 	var b [24]byte
-	_, _ = rand.Read(b[:])
-	return "goloop-" + hex.EncodeToString(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("mail: random boundary: %w", err)
+	}
+	return "goloop-" + hex.EncodeToString(b[:]), nil
 }
 
-// messageID returns a unique RFC 5322 Message-ID.
-func messageID() string {
+// messageID returns a unique RFC 5322 Message-ID. It errors if the system
+// random source fails, so the ID is never silently deterministic.
+func messageID() (string, error) {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("mail: message id: %w", err)
+	}
 	host, err := os.Hostname()
 	if err != nil || host == "" {
 		host = "localhost"
 	}
-	return fmt.Sprintf("<%s@%s>", hex.EncodeToString(b[:]), host)
+	return fmt.Sprintf("<%s@%s>", hex.EncodeToString(b[:]), host), nil
 }

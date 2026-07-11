@@ -89,6 +89,8 @@ type SMTPConfig struct {
 	From     Address // default From when a message has none
 	TLS      TLSMode
 	Timeout  time.Duration // default 10s
+
+	AllowInsecureAuth bool // permit credentials over TLSNone (testing only)
 }
 ```
 
@@ -96,7 +98,9 @@ type SMTPConfig struct {
 `TLSNone` (development only). When `Username` is set, `PLAIN` auth is attempted;
 `net/smtp` only permits it over a TLS connection or to localhost, so pair auth
 with `TLSImplicit`/`TLSStartTLS` in production - never send credentials over
-`TLSNone` to a remote host.
+`TLSNone` to a remote host. Credentials over `TLSNone` are refused with
+`ErrInsecureAuth` unless you set `AllowInsecureAuth`, which is intended only for
+local testing.
 
 The send sequence: validate sender/recipients, build the message, dial with the
 timeout, upgrade to TLS if configured, authenticate, then `MAIL`/`RCPT`/`DATA`

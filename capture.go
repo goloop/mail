@@ -29,21 +29,27 @@ func (c *CaptureSender) Send(_ context.Context, msg Message) error {
 	return nil
 }
 
-// Messages returns a copy of the captured messages.
+// Messages returns a deep copy of the captured messages, so a caller that
+// mutates the returned slices, maps or attachment data cannot corrupt the
+// captured state a later inspection relies on.
 func (c *CaptureSender) Messages() []Message {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]Message(nil), c.messages...)
+	out := make([]Message, len(c.messages))
+	for i, m := range c.messages {
+		out[i] = m.clone()
+	}
+	return out
 }
 
-// Last returns the most recently captured message.
+// Last returns a deep copy of the most recently captured message.
 func (c *CaptureSender) Last() (Message, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.messages) == 0 {
 		return Message{}, false
 	}
-	return c.messages[len(c.messages)-1], true
+	return c.messages[len(c.messages)-1].clone(), true
 }
 
 // Reset clears the captured messages.

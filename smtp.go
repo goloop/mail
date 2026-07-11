@@ -34,6 +34,11 @@ type SMTPConfig struct {
 	From     Address // default From when a message has none
 	TLS      TLSMode
 	Timeout  time.Duration
+
+	// AllowInsecureAuth permits sending credentials over an unencrypted
+	// connection (TLSNone). It is off by default: credentials never travel in
+	// cleartext unless you opt in, which is intended only for local testing.
+	AllowInsecureAuth bool
 }
 
 func (c SMTPConfig) timeout() time.Duration {
@@ -96,11 +101,18 @@ func (s *smtpSender) Send(ctx context.Context, msg Message) error {
 		}
 	}()
 
+	bcc := bccSet(msg)
+
 	if err := client.Mail(msg.From.Email); err != nil {
 		return fmt.Errorf("mail: MAIL FROM <%s>: %w", msg.From.Email, err)
 	}
 	for _, r := range recipients {
 		if err := client.Rcpt(r); err != nil {
+			// Do not put a blind recipient's address in the error: a caller
+			// that logs or shows it would leak the Bcc.
+			if bcc[r] {
+				return fmt.Errorf("mail: RCPT TO (blind recipient): %w", err)
+			}
 			return fmt.Errorf("mail: RCPT TO <%s>: %w", r, err)
 		}
 	}
@@ -115,11 +127,38 @@ func (s *smtpSender) Send(ctx context.Context, msg Message) error {
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("mail: close body: %w", err)
 	}
-	return client.Quit()
+
+	// The server accepted the message once DATA closed cleanly. A failure to
+	// QUIT after that (context cancel, dirty close) does not un-send it, so do
+	// not report it as a delivery failure and risk a duplicate on retry.
+	_ = client.Quit()
+	return nil
+}
+
+// bccSet returns the set of Bcc recipient emails, for masking their addresses
+// in errors so a blind recipient is not disclosed.
+func bccSet(msg Message) map[string]bool {
+	if len(msg.Bcc) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(msg.Bcc))
+	for _, a := range msg.Bcc {
+		if a.Email != "" {
+			set[a.Email] = true
+		}
+	}
+	return set
 }
 
 // dial opens an SMTP client, applying the TLS mode, deadline and auth.
 func (s *smtpSender) dial(ctx context.Context) (*smtp.Client, error) {
+	// Never send credentials in cleartext by default. AUTH PLAIN over an
+	// unencrypted connection exposes the password, so refuse it unless the
+	// caller has explicitly opted in for local testing.
+	if s.cfg.TLS == TLSNone && s.cfg.Username != "" && !s.cfg.AllowInsecureAuth {
+		return nil, ErrInsecureAuth
+	}
+
 	addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(s.cfg.port()))
 	d := &net.Dialer{Timeout: s.cfg.timeout()}
 
