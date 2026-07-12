@@ -23,6 +23,23 @@ type Message struct {
 	Headers     map[string]string // extra headers (structural headers win)
 }
 
+// Text builds a plain-text message to one recipient. It covers the common
+// case in one call; set Cc, Bcc, attachments or an HTML part on the returned
+// value for anything more.
+//
+//	msg := mail.Text(
+//	    mail.Address{Name: "Ada", Email: "ada@example.com"},
+//	    "Welcome", "Your account is ready.")
+func Text(to Address, subject, body string) Message {
+	return Message{To: []Address{to}, Subject: subject, Text: body}
+}
+
+// HTML builds an HTML message to one recipient. Pass a plain-text alternative
+// in text (empty for none); when set, the message is multipart/alternative.
+func HTML(to Address, subject, html, text string) Message {
+	return Message{To: []Address{to}, Subject: subject, HTML: html, Text: text}
+}
+
 // clone returns a deep copy: the address slices, the headers map and each
 // attachment's bytes are copied, so mutating the original after cloning cannot
 // change the copy.

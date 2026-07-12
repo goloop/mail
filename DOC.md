@@ -76,7 +76,17 @@ type Sender interface {
 - `NewLogger(io.Writer)` writes the built message (development).
 - `NewCapture()` records messages (tests): `Messages`, `Last`, `Reset`.
 
-The `Send(ctx, sender, to, subject, text)` helper covers the plain-text case.
+The `Send(ctx, sender, to, subject, text)` helper covers the fire-and-forget
+plain-text case. To build a message you then customize (a named recipient, Cc,
+attachments, an HTML part), use the `Text(to, subject, body)` or
+`HTML(to, subject, html, text)` constructors instead of a struct literal:
+
+```go
+msg := mail.Text(mail.Address{Name: "Ada", Email: "ada@example.com"},
+	"Welcome", "Your account is ready.")
+msg.Cc = []mail.Address{{Email: "team@example.com"}}
+err := sender.Send(ctx, msg)
+```
 
 ## SMTP configuration
 

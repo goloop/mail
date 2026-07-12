@@ -594,3 +594,24 @@ func TestCaptureDeepCopy(t *testing.T) {
 		t.Fatalf("captured message shares slice: %q", got.To[0].Email)
 	}
 }
+
+// Text and HTML build a single-recipient message in one call.
+func TestConvenienceConstructors(t *testing.T) {
+	to := Address{Name: "Ada", Email: "ada@example.com"}
+
+	m := Text(to, "Hi", "plain body")
+	if len(m.To) != 1 || m.To[0].Email != "ada@example.com" ||
+		m.Subject != "Hi" || m.Text != "plain body" || m.HTML != "" {
+		t.Fatalf("Text built wrong message: %+v", m)
+	}
+
+	h := HTML(to, "Hi", "<p>hello</p>", "hello")
+	if h.HTML != "<p>hello</p>" || h.Text != "hello" || len(h.To) != 1 {
+		t.Fatalf("HTML built wrong message: %+v", h)
+	}
+
+	// The result is a normal Message that still builds.
+	if _, err := m.build(); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+}
