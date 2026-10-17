@@ -126,3 +126,7 @@ and aborts the exchange.
 
 `mail` does one send per call and returns the error. Retries, queues,
 templating, bounce handling, inbound email and vendor APIs are out of scope.
+
+## Release v1.0.0
+
+Encode attachments in one buffer and interrupt SMTP setup on cancellation. The v1 release keeps the existing import path and public API. Future incompatible changes require a new major version.

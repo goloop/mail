@@ -1,4 +1,4 @@
-[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/mail) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/mail/blob/master/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
+[![Go Reference](https://img.shields.io/badge/godoc-reference-blue)](https://pkg.go.dev/github.com/goloop/mail) [![License](https://img.shields.io/badge/license-MIT-brightgreen)](https://github.com/goloop/mail/blob/v1/LICENSE) [![Stay with Ukraine](https://img.shields.io/static/v1?label=Stay%20with&message=Ukraine%20♥&color=ffD700&labelColor=0057B8&style=flat)](https://u24.gov.ua/)
 
 # mail
 
@@ -76,3 +76,7 @@ quoted-printable, вкладення - base64. Стабільні `Date`, `Messa
 ## Ліцензія
 
 MIT - див. [LICENSE](LICENSE).
+
+## Реліз v1.0.0
+
+Скасування контексту перериває очікування SMTP greeting та авторизації. Base64-вкладення кодуються без проміжної копії, зі збереженням CRLF і довжини рядка 76 символів. Реліз v1 зберігає поточний import path і публічний API. Майбутні несумісні зміни потребуватимуть нової головної версії.

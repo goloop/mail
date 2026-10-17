@@ -302,17 +302,22 @@ func qpEncode(b []byte) []byte {
 
 // base64Wrap base64-encodes data, wrapped at 76 columns per RFC 2045.
 func base64Wrap(data []byte) []byte {
-	enc := base64.StdEncoding.EncodeToString(data)
-	var buf bytes.Buffer
-	for i := 0; i < len(enc); i += 76 {
-		end := i + 76
-		if end > len(enc) {
-			end = len(enc)
-		}
-		buf.WriteString(enc[i:end])
-		buf.WriteString("\r\n")
+	if len(data) == 0 {
+		return nil
 	}
-	return buf.Bytes()
+	size := base64.StdEncoding.EncodedLen(len(data))
+	out := make([]byte, size+2*((size+75)/76))
+	pos := 0
+	for len(data) > 0 {
+		n := min(len(data), 57)
+		encoded := base64.StdEncoding.EncodedLen(n)
+		base64.StdEncoding.Encode(out[pos:pos+encoded], data[:n])
+		pos += encoded
+		out[pos], out[pos+1] = '\r', '\n'
+		pos += 2
+		data = data[n:]
+	}
+	return out
 }
 
 // maxFilenameBytes bounds an attachment filename so it cannot produce a

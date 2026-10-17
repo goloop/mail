@@ -180,6 +180,8 @@ func (s *smtpSender) dial(ctx context.Context) (*smtp.Client, error) {
 		_ = conn.SetDeadline(time.Now().Add(s.cfg.timeout()))
 	}
 
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopCancel()
 	client, err := smtp.NewClient(conn, s.cfg.Host)
 	if err != nil {
 		_ = conn.Close()
